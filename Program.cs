@@ -188,11 +188,16 @@ namespace ExcelLinqApp {
                                Func<Cell, T> cellValueSelector,
                                int selectColumnIndex,
                                Func<T, T, bool> valueComparator) {
+
+      Contract.Requires(columns != null && columns.Length > 0, $"{nameof(columns)} can not be null.");
+      Contract.Requires(selectColumnIndex >= 0 && selectColumnIndex < columns.Length,
+                        $"{nameof(selectColumnIndex)} : {selectColumnIndex} should be in the indexes of ${nameof(columns)}. ");
+
+      // Note: `Requires<ArgumentException>` requires Code Contracts to do binary rewrite
       //Contract.Requires<ArgumentException>(columns != null && columns.Length > 0,
       //                                     $"{nameof(columns)} can not be null.");
       //Contract.Requires<ArgumentException>(selectColumnIndex >= 0 && selectColumnIndex < columns.Length,
       //                                     $"{nameof(selectColumnIndex)} : {selectColumnIndex} should be in the indexes of ${nameof(columns)}. ");
-      Contract.Requires(columns != null && columns.Length > 0, $"{nameof(columns)} can not be null.");
 
       Row selectRowOrNull = rows.Slice(sheetRowRange)
                                 .FirstOrDefault(row => columns.Any(col => valueComparator(cellValueSelector(row[col]), lookUpValue)));
