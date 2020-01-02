@@ -9,8 +9,9 @@ using MoreLinq.Extensions;
 // Notice: SheetRowRange(2, 4) means rows [2, 4) in the Excel sheet, and the index start from 1 just as Microsoft Excel,
 // so row 2 is actual the first data row and the first item in the `ExcelQueryable<Row>` with index 0.
 using SheetRowRange = System.ValueTuple<int, int>;
+// Notice: Since `Row`'s indexer takes the column's name, we do not use the column number in Excel like `A` or `AB`.
 using SheetColumnRange = System.ValueTuple<char, char>;
-using CellPosition = System.ValueTuple<char, int>;
+using CellPosition = System.ValueTuple<int, char>;
 using System.Diagnostics.Contracts;
 using ComparerExtensions;
 
@@ -18,11 +19,11 @@ namespace ExcelLinqApp {
 
   sealed class Program {
 
-    static void Main(string[] args) {
+    static void Main() {
 
-      string currentDirectory = System.IO.Directory.GetCurrentDirectory();
+      string currentDirectory = Directory.GetCurrentDirectory();
       Program.ExcelFilePath = Path.Combine(currentDirectory, "../../Resources", "TestInput.xlsx");
-      Console.WriteLine($"Input xlsx file path: {Program.ExcelFilePath}.");
+      Console.WriteLine($"Input xlsx file path: { Program.ExcelFilePath }.");
       var separatorLine = String.Concat(Enumerable.Repeat('-', 60));
       Console.WriteLine(separatorLine);
 
@@ -32,7 +33,7 @@ namespace ExcelLinqApp {
         var columnName = "UserName";
         var rowRange = (2, 15);
         var distinctElementsCount = RunExample1CountDistinctElements(sheetName, columnName, rowRange);
-        Console.WriteLine($"Find {distinctElementsCount} elements in column {columnName}, row { rowRange.Item1 } to { rowRange.Item2 } from {sheetName}.");
+        Console.WriteLine($"Find {distinctElementsCount} unique elements in column { columnName }, row { rowRange.Item1 } to { rowRange.Item2 } from { sheetName }.");
       }
       Console.WriteLine(separatorLine);
 
@@ -49,22 +50,22 @@ namespace ExcelLinqApp {
         var sheetRowRange = (2, 7);
         string[] columns = { "Id", "Length" };
         var selectColumnIndex = 1;
-        bool ValueComparator(string str1, string str2) => str1 == str2; // local function (since C# 7)
+        static bool ValueComparator(string str1, string str2) => str1 == str2; // local function (since C# 7)
 
         var findValue = RunExample3VlookupV2(lookUpValue, sheetRowRange, columns, selectColumnIndex, ValueComparator);
-        Console.WriteLine($"Find Value: {findValue} in Sheet3.");
+        Console.WriteLine($"Find Value: { findValue } in Sheet3.");
       }
       Console.WriteLine(separatorLine);
 
       Console.WriteLine("Example 6: Continuoues rank");
       {
-        RunExample6ContinuousRank((row, rank) => Console.WriteLine($"Name: {row["UserName"].Value} , Rank: {rank}, Length: {row["Length"].Value}."));
+        RunExample6ContinuousRank((row, rank) => Console.WriteLine($"Name: { row["UserName"].Value } , Rank: { rank }, Length: { row["Length"].Value }."));
       }
       Console.WriteLine(separatorLine);
 
       Console.WriteLine("Example 6: Multi rows rank");
       {
-        RunExample6MultiFieldsRank((row, rank) => Console.WriteLine($"Name: {row["UserName"].Value} , Rank: {rank}."));
+        RunExample6MultiFieldsRank((row, rank) => Console.WriteLine($"Name: { row["UserName"].Value } , Rank: { rank }."));
       }
       Console.WriteLine(separatorLine);
 
@@ -74,10 +75,9 @@ namespace ExcelLinqApp {
     private static String ExcelFilePath;
 
     private static T ProcessExcelData<T>(string sheetName, Func<ExcelQueryable<Row>, T> processFunc) {
-      using (var execelfile = new ExcelQueryFactory(ExcelFilePath)) {
-        var tsheet = execelfile.Worksheet(sheetName);
-        return processFunc(tsheet);
-      }
+      using var execelfile = new ExcelQueryFactory(ExcelFilePath); // Note: this is the same as `using (var execelfile = ... ) { ... } `
+      var tsheet = execelfile.Worksheet(sheetName);
+      return processFunc(tsheet);
     }
 
     private static int RunExample1CountDistinctElements(string sheetName, string columnName, ValueTuple<int, int> rowRange) {
@@ -91,8 +91,8 @@ namespace ExcelLinqApp {
     private static String RunExample3VlookupV1() {
       var columnNames = new string[2] { "Id", "Length" };
       return ProcessExcelData("Sheet3", (sheet) => {
-        // FIXME: `ElementAt` not supported
-        var content = (sheet.Slice(6, 6).First())["Id"].Value.ToString(); // get Cell at row (6+2) and column `Id`
+        var content = sheet.CellValueAsString(8, "Id"); // get Cell at row 8 and column `Id`
+        // or use: var content = (sheet.Slice(6, 6).First())["Id"].Value.ToString(); // get Cell at row (6+2) and column `Id`
         var selectValues = sheet.Slice(0, 4) // get Row[1:1+5]
                            .FirstOrDefault(row => columnNames.Any(c => row[c].Value.ToString() == content));
 
@@ -115,9 +115,12 @@ namespace ExcelLinqApp {
     }
 
     private static int RunExample6ContinuousRank(Action<Row, int> rowRankHandler) {
+      Contract.Requires(rowRankHandler != null);
+
       return ProcessExcelData<int>("Sheet6", (sheet) => {
 
-        var sheetRows = sheet.ToArray(); // Hack for the issue that group is not supported, convert to objects to use LINQ to objects
+        // Note: Since MoreLINQ lib only support LINQ to objects, so to use the extension methods provide by MoreLINQ, we must first retrive data as objects.
+        var sheetRows = sheet.ToArray(); // Hack for the issue that group is not supported, convert to objects to use LINQ to objects.
         var groups = sheetRows.GroupBy(e => (double)(e["Length"].Value));    // group items by length
         var groupsRank = groups.RankBy(group => group.Key);                  // rank groups
         // var groupWithRanks = groups.Zip(groupsRank, (group, rank) => Tuple.Create(group, rank));   // zip groups with their ranks
@@ -136,6 +139,8 @@ namespace ExcelLinqApp {
     }
 
     private static int RunExample6MultiFieldsRank(Action<Row, int> rowRankHandler) {
+      Contract.Requires(rowRankHandler != null);
+
       return ProcessExcelData("Sheet6", (sheet) => {
         var comparer = KeyComparer<Row>.OrderBy(e => e["Type"].Value.ToString())
                                        .ThenBy(e => (double)e["Length"].Value)
@@ -159,7 +164,18 @@ namespace ExcelLinqApp {
 
     public static readonly Func<Cell, string> cellValueToStringFunc = cell => cell.Value.ToString();
 
-    public static int RowNumberToQueryIndex(int rowNumber) { return rowNumber - 2; }
+    public static int RowNumberToQueryIndex(this int rowNumber) { return rowNumber - 2; }
+
+    public static int ColumnNumberToQueryIndex(this char columnNumber) {
+      // convert lowercase char to uppercase
+      if ('a' <= columnNumber && columnNumber <= 'z') {
+        columnNumber = (char)(columnNumber + 'A' - 'a');
+      }
+
+      Contract.Requires('A' <= columnNumber && columnNumber <= 'Z');
+
+      return columnNumber - 'A';
+    }
 
     public static IEnumerable<T> Slice<T>(this IEnumerable<T> sequence, SheetRowRange sheetRowRange) {
       Contract.Requires(sheetRowRange.Item1 <= sheetRowRange.Item2);
@@ -189,15 +205,13 @@ namespace ExcelLinqApp {
                                int selectColumnIndex,
                                Func<T, T, bool> valueComparator) {
 
-      Contract.Requires(columns != null && columns.Length > 0, $"{nameof(columns)} can not be null.");
-      Contract.Requires(selectColumnIndex >= 0 && selectColumnIndex < columns.Length,
+      Contract.Requires(columns != null && columns.Length > 0, $"{nameof(columns)} can not be null or empty.");
+      Contract.Requires(columns.All(n => !String.IsNullOrEmpty(n)), $"Column names in {nameof(columns)} can not be null or empty string.");
+      Contract.Requires(0 <= selectColumnIndex && selectColumnIndex < columns.Length,
                         $"{nameof(selectColumnIndex)} : {selectColumnIndex} should be in the indexes of ${nameof(columns)}. ");
 
       // Note: `Requires<ArgumentException>` requires Code Contracts to do binary rewrite
-      //Contract.Requires<ArgumentException>(columns != null && columns.Length > 0,
-      //                                     $"{nameof(columns)} can not be null.");
-      //Contract.Requires<ArgumentException>(selectColumnIndex >= 0 && selectColumnIndex < columns.Length,
-      //                                     $"{nameof(selectColumnIndex)} : {selectColumnIndex} should be in the indexes of ${nameof(columns)}. ");
+      // // Contract.Requires<ArgumentException>(columns != null && columns.Length > 0, $"{nameof(columns)} can not be null or empty.");
 
       Row selectRowOrNull = rows.Slice(sheetRowRange)
                                 .FirstOrDefault(row => columns.Any(col => valueComparator(cellValueSelector(row[col]), lookUpValue)));
